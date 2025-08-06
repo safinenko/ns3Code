@@ -4,11 +4,8 @@ import re
 from dash import Dash, dcc, html, Input, Output, State, no_update, callback_context
 import plotly.graph_objects as go
 
-from Scripts.streetNetwork import StreetNetwork
 
-
-# Import street network, topology, UEs
-streetNetwork = StreetNetwork()
+# Import topology and UEs
 UEroutes = pd.read_csv('outputs/UE_locations.csv', index_col = 'Time(s)')
 radioTowers = pd.read_csv('outputs/tower_locations.csv')
 
@@ -25,19 +22,6 @@ UEmeasurements = pd.read_csv('outputs/rsrp_rsrq_trace.csv',
                                 'RSRP' : float,
                                 'RSRQ' : float
                              })
-
-# Convert tower coordinates from Cartesian back to Lat/Lon for the map
-tower_lon, tower_lat = streetNetwork.projectionMap(
-    radioTowers['x'], radioTowers['y'], inverse = True
-)
-radioTowers['lat'] = tower_lat
-radioTowers['lon'] = tower_lon
-
-ue_lon, ue_lat = streetNetwork.projectionMap(
-    UEroutes['x'], UEroutes['y'], inverse = True
-)
-UEroutes['lat'] = ue_lat
-UEroutes['lon'] = ue_lon
 
 # Parse logs
 timeStampPattern = re.compile(r'^\+?(\d+\.\d+)s')
@@ -84,87 +68,12 @@ checklist = dcc.Checklist(
     className = 'checklist-container'
 )
 
-
-app = Dash(__name__, title = 'ns-3 visualizer', update_title = None)
-app.layout = html.Div([
-    html.H2('LTE handover simulation results',
-            style = {'textAlign' : 'center', 'padding' : '0pt', 'fontSize' : '20px'}),
-    html.Hr(),
-    html.Div([
-        html.Div([
-            timeSlider,
-            dcc.Interval(id = 'autoSlider', interval = 250, n_intervals = 0, disabled = True),
-            html.Div([
-                html.Div(html.Button('Autoplay', id = 'autoPlaySimulation',
-                                     style = {'backgroundColor' : 'lightBlue'}),
-                         style = {'position' : 'absolute', 'z-index' : '1002',
-                                  'top' : '10px', 'left' : '10px'}),
-                dcc.Graph(id = 'network-map-graph',
-                          style = {'height' : '70vh'},
-                          config = {'displayModeBar' : False})
-                ], style = {'position' : 'relative'})
-            ],
-            style = {'width' : '45%', 'display' : 'inline-block', 'padding' : '10px',
-                     'verticalAlign' : 'top'}),
-        html.Div(
-            id = 'right-column-content',
-            style = {'width' : '50%', 'display' : 'inline-block',
-                     'verticalAlign' : 'top', 'padding' : '16px'},
-            children = [
-                html.Div([
-                    checklist,
-                    html.Div(html.Button('Update shown RRC messages', id = 'RRCs-to-show',
-                                         style = {'backgroundColor' : 'lightBlue'}),
-                             style = {'textAlign' : 'center'}),
-                ], className = 'slider-container'),
-                dcc.Graph(id = 'signal-strength-graph',
-                          config = {'displayModeBar' : False},
-                          style = {'height' : '70vh'})
-            ]
-        )
-    ]),
-    dcc.Store(id = 'selected_ue', storage_type = 'memory'),
-    dcc.Store(id = 'autoAnimate', storage_type = 'memory'),
-    dcc.Store(id = 'listOfRRCs', storage_type = 'memory')
-])
-
-
-
-@app.callback(
-    Output('autoAnimate', 'data'),
-    Output('autoPlaySimulation', 'children'),
-    Output('autoSlider', 'disabled'),
-    Input('autoPlaySimulation', 'n_clicks'),
-    State('autoAnimate', 'data'),)
-def toggleAnimation(_, autoAnimate):
-    if autoAnimate is None:
-        return False, 'Autoplay Off', True
-    else:
-        if autoAnimate:
-            return False, 'Autoplay Off', True
-        else:
-            return True, 'Autoplaying..', False
-
-
-@app.callback(
-    Output('network-map-graph', 'figure'),
-    Output('time-slider', 'value'),
-    Input('autoSlider', 'n_intervals'),
-    Input('time-slider', 'value'),
-    Input('selected_ue', 'data'),
-    State('network-map-graph', 'figure'),
-    State('autoAnimate', 'data'))
-def update_map(autoSlide, selected_time, used_ID, mapData, autoAnimate):
-    if callback_context.triggered_id == 'autoSlider':
-        if autoAnimate:
-            selected_time = min(UEroutes.index.max(), selected_time + 10)
-            
-        else:
-            return no_update
-    else:
-        autoSlide = selected_time // 10
-
-    return generateFigure(selected_time, used_ID, mapData)
+autoPlayButton = html.Div(
+    html.Button('Autoplay',
+                id = 'autoPlaySimulation',
+                style = {'backgroundColor' : 'lightBlue'}),
+    style = {'position' : 'absolute', 'z-index' : '1002',
+             'top' : '10px', 'left' : '10px'})
 
 
 def generateFigure(selected_time, used_ID, mapData):
@@ -226,8 +135,6 @@ def generateFigure(selected_time, used_ID, mapData):
         ))
 
     if mapData is not None:
-        # for i in mapData['data']:
-        #     print(i)
         mapCenter = mapData['layout']['map']
     else:
         mapCenter = {
@@ -247,18 +154,117 @@ def generateFigure(selected_time, used_ID, mapData):
     return networkMap, selected_time
 
 
+app = Dash(__name__, title = 'ns-3 visualizer', update_title = None)
+app.layout = html.Div([
+    html.H2('LTE handover simulation results',
+            style = {'textAlign' : 'center', 'padding' : '0pt', 'fontSize' : '20px'}),
+    html.Hr(),
+    html.Div([
+        html.Div([
+            timeSlider,
+            dcc.Interval(id = 'autoSlider', interval = 1000, n_intervals = 0, disabled = True),
+            html.Div([
+                autoPlayButton,
+                dcc.Graph(id = 'network-map-graph',
+                          style = {'height' : '70vh'},
+                          config = {'displayModeBar' : False},
+                          figure = generateFigure(UEroutes.index[1], None, None)[0])
+            ], style = {'position' : 'relative'})
+        ],
+
+        style = {'width' : '45%', 'display' : 'inline-block', 'padding' : '5px',
+                 'verticalAlign' : 'top'}),
+        html.Div([
+            html.Div([
+                checklist,
+                html.Div(
+                    html.Button('Update shown RRC messages', id = 'RRCs-to-show',
+                                style = {'backgroundColor' : 'lightBlue'}),
+                    style = {'textAlign' : 'center'}),
+                ],
+                className = 'slider-container'),
+                dcc.Graph(id = 'signal-strength-graph',
+                          config = {'displayModeBar' : False},
+                          style = {'height' : '70vh'})
+            ],             style = {'width' : '50%', 'display' : 'inline-block',
+                     'verticalAlign' : 'top', 'padding' : '5px'}
+        )
+    ]),
+    dcc.Store(id = 'selected_ue', storage_type = 'memory'),
+    dcc.Store(id = 'autoAnimate', storage_type = 'memory'),
+    dcc.Store(id = 'listOfRRCs', storage_type = 'memory')
+])
+
+
 @app.callback(
-    Output('signal-strength-graph', 'figure'),
+    Output('network-map-graph', 'figure'),
+    Output('time-slider', 'value'),
+    Output('autoAnimate', 'data'),
+    Output('autoPlaySimulation', 'children'),
+    Output('autoSlider', 'disabled'),
+    Output('signal-strength-graph', 'figure', allow_duplicate = True),
+    Input('autoPlaySimulation', 'n_clicks'),
+    Input('autoSlider', 'n_intervals'),
+    Input('time-slider', 'value'),
+    Input('selected_ue', 'data'),
+    State('network-map-graph', 'figure'),
+    State('autoAnimate', 'data'),
+    State('checkList', 'value'),
+    Input('network-map-graph', 'clickData'),
+    prevent_initial_call = True)
+def update_map(_, autoSlide, selected_time, used_ID, mapData, autoAnimate, listOfRRCs, clickData):
+    print(callback_context.triggered_id, autoAnimate)
+    if autoAnimate is None:
+        autoAnimate = False
+    if callback_context.triggered_id == 'autoPlaySimulation':
+        if autoAnimate:
+            returnVars = False, 'Autoplay Off', True
+        else:
+            # Check if we reached the last record
+            selected_time = min(UEroutes.index.max(), selected_time)
+            if selected_time == UEroutes.index.max():
+                returnVars = False, 'Autoplay Off', True
+            returnVars = True, 'Autoplaying..', False
+
+        print(returnVars)
+
+        return mapData, selected_time, *returnVars, updateGraph(clickData, used_ID, selected_time, listOfRRCs, 'a')[0]
+
+
+    if callback_context.triggered_id == 'autoSlider':
+        if autoAnimate:
+            selected_time = min(UEroutes.index.max(), selected_time + 10)
+            if selected_time == UEroutes.index.max():
+                autoAnimate = False
+        else:
+            return no_update
+    else:
+        autoSlide = selected_time // 10
+
+    return *generateFigure(selected_time, used_ID, mapData), \
+           autoAnimate, 'Autoplaying..' if autoAnimate else 'Autoplay Off', not autoAnimate, \
+           updateGraph(clickData, used_ID, selected_time, listOfRRCs, 'a')[0]
+
+
+
+@app.callback(
+    Output('signal-strength-graph', 'figure', allow_duplicate = True),
     Output('selected_ue', 'data'),
-    Output('listOfRRCs', 'data'),
     Input('network-map-graph', 'clickData'),
     Input('selected_ue', 'data'),
+    State('time-slider', 'value'),
     State('checkList', 'value'),
-    Input('RRCs-to-show', 'n_clicks'))
-def update_signal_graph(clickData, used_ID, listOfRRCs, _):
-    fig = go.Figure()
+    Input('RRCs-to-show', 'n_clicks'),
+    prevent_initial_call = True)
+def update_signal_graph(*args):
+    print(callback_context.triggered_id)
 
+    return updateGraph(*args)
+
+
+def updateGraph(clickData, used_ID, selected_time, listOfRRCs, _):
     if clickData is None:
+        fig = go.Figure()
         fig.update_layout(
             xaxis = {'visible' : False},
             yaxis = {'visible' : False},
@@ -270,7 +276,7 @@ def update_signal_graph(clickData, used_ID, listOfRRCs, _):
                 'font' : {'size': 16}
             }]
         )
-        return fig, used_ID, listOfRRCs
+        return fig, None
 
     if clickData['points'][0]['curveNumber'] == 1:
         UE_ID = clickData['points'][0]['pointNumber'] + 1
@@ -278,6 +284,7 @@ def update_signal_graph(clickData, used_ID, listOfRRCs, _):
         servingCellMeasurements = UEmeasurements[(UEmeasurements['IMSI'] == UE_ID) &
                                                  (UEmeasurements['Status'] == 'Serving')]
 
+        fig = go.Figure()
         allServing = UEmeasurements[
             (UEmeasurements['IMSI'] == UE_ID) &
             UEmeasurements['eNB_NodeID'].isin(servingCellMeasurements['eNB_NodeID'].unique())]
@@ -313,6 +320,7 @@ def update_signal_graph(clickData, used_ID, listOfRRCs, _):
             title_text = f'Signal Strength for UE {UE_ID}',
             xaxis_title = 'Time (m)',
             yaxis = {'title' : 'RSRP (dBm)', 'range' : bounds},
+            xaxis = {'range' : [0, UEroutes.index.max() / 60]},
             yaxis2 = {'title' : 'RSRQ (dB)', 'overlaying' : 'y', 'side' : 'right'},
             legend = {
                 'orientation' : 'h',
@@ -339,10 +347,25 @@ def update_signal_graph(clickData, used_ID, listOfRRCs, _):
                     line = {'color' : 'black', 'width' : 0.5, 'dash' : 'dash'}
                 ))
 
-        return fig, UE_ID, listOfRRCs
-    else:
-        return no_update, used_ID, listOfRRCs
+        fig.add_trace(go.Scatter(
+            x = [selected_time / 60, selected_time / 60],
+            y = bounds,
+            showlegend = False,
+            line = {'color' : 'green', 'width' : 0.5, 'dash' : 'dot'}
+        ))
+        fig.add_annotation(text = 'Simulation time',
+                           xref = 'paper', yref = 'paper',
+                           x = selected_time / UEroutes.index.max(), y = 1, 
+                           showarrow = False,
+                           xanchor = 'center', yanchor = 'bottom',
+                           font = {'size' : 10})
 
+        return fig, UE_ID
+    else:
+        return no_update, used_ID
+
+
+server = app.server
 
 if __name__ == '__main__':
     app.run(debug = True)

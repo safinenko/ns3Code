@@ -15,13 +15,20 @@ radioTowersX, radioTowersY = fetchNetwork()
 UEroutes = generateAllRoutes(streetNetwork)
 UElocations = convertPathsToTimeseries(UEroutes, streetNetwork)
 
-
 # Store UE paths and tower locations
-pd.concat(UElocations).to_csv('outputs/UE_locations.csv')
+UElocationsDF = pd.concat(UElocations)
+ue_lon, ue_lat = streetNetwork.projectionMap(
+    UElocationsDF['x'], UElocationsDF['y'], inverse = True
+)
+UElocationsDF['lat'] = ue_lat
+UElocationsDF['lon'] = ue_lon
+UElocationsDF[['UE_ID', 'lat', 'lon']].to_csv('outputs/UE_locations.csv')
+
 with open('outputs/tower_locations.csv', 'w') as f:
-    f.write('x,y\n')
+    f.write('lon,lat\n')
     for x, y in zip(radioTowersX, radioTowersY):
-        f.write(f'{x},{y}\n')
+        lon, lat = streetNetwork.projectionMap(x, y, inverse = True)
+        f.write(f'{lon},{lat}\n')
 
 ###############################################################################
 # ns-3: configuration
@@ -32,9 +39,9 @@ ns.Config.SetDefault('ns3::LteUePhy::UeMeasurementsFilterPeriod',
 # ns.Config.SetDefault('ns3::ConfigStore::Filename',
 #                      ns.StringValue('output-attributes.txt'));
 # ns.Config.SetDefault('ns3::ConfigStore::FileFormat',
-#                      ns.StringValue('RawText'));
+#                      ns.StringValue('RawText'))
 # ns.Config.SetDefault('ns3::ConfigStore::Mode',
-#                      ns.StringValue ('Save'));
+#                      ns.StringValue ('Save'))
 
 ###############################################################################
 # ns-3: eNBs setup
@@ -149,7 +156,7 @@ def RSRP_RSRQ_callback(RNTI, cell_id, rsrp, rsrq, is_serving, cc_id):
         # Write the enriched data, including the permanent IMSI
         RSRP_RSRQ_writer.write(
             f'{ns.Simulator.Now().GetSeconds()},{IMSI},{ue_node_id},'
-            f'{RNTI},{status},{enb_node_id},{cell_id},{rsrp},{rsrq}\n'
+            f'{RNTI},{status},{enb_node_id},{cell_id},{rsrp:.03f},{rsrq:.03f}\n'
         )
 
 

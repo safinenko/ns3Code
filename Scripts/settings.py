@@ -1,6 +1,6 @@
 nUEs = 15
 nMinutes = 20
-UeMeasurementsFilterPeriod = 200 # ms
+UeMeasurementsFilterPeriod = 25 # ms
 
 # Settings for UEpaths
 minTravelDist = 17000
