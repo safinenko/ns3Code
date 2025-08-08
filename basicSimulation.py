@@ -8,7 +8,8 @@ np.random.seed(34)
 from Scripts.streetNetwork import StreetNetwork
 from Scripts.networkTopo import fetchNetwork
 from Scripts.UEpaths import generateAllRoutes, convertPathsToTimeseries
-from Scripts.settings import nUEs, nMinutes, UeMeasurementsFilterPeriod
+from Scripts.settings import nUEs, nMinutes, UeMeasurementsFilterPeriod, nBuildings
+from Scripts.buildings import generateBuildings
 
 streetNetwork = StreetNetwork()
 radioTowersX, radioTowersY = fetchNetwork()
@@ -52,11 +53,10 @@ mobility_helper = ns.MobilityHelper()
 
 position_allocator = ns.ListPositionAllocator()
 for xPos, yPos in zip(radioTowersX, radioTowersY):
-    position_allocator.Add(ns.Vector(xPos, yPos, 10.0))
+    position_allocator.Add(ns.Vector(xPos, yPos, 20.0))
 
 mobility_helper.SetPositionAllocator(position_allocator)
 mobility_helper.SetMobilityModel('ns3::ConstantPositionMobilityModel')
-mobility_helper.Install(enb)
 
 ###############################################################################
 # ns-3: UEs setup
@@ -73,6 +73,27 @@ for i in range(nUEs):
         WMmobility.AddWaypoint(ns.Waypoint(ns.Time(ns.Seconds(tStamp)),
                                            ns.Vector(xPos, yPos, 1.)))
 
+buildings = ns.BuildingList()
+buildingSizes, buildingxPts, buildingyPts, buildingHeights = generateBuildings()
+for i in range(nBuildings):
+    building = ns.CreateObject[ns.Building]()
+    building.SetBoundaries(ns.Box(
+        buildingxPts[i], buildingxPts[i] + buildingSizes[i],
+        buildingyPts[i], buildingyPts[i] + buildingSizes[i],
+        0.0, buildingHeights[i]))
+    building.SetBuildingType(ns.Building.Residential)
+    building.SetExtWallsType(ns.Building.ConcreteWithWindows)
+    building.SetNFloors(max(int(buildingHeights[i] / 15), 1))
+    building.SetNRoomsX(max(int(buildingSizes[i] / 15), 1))
+    building.SetNRoomsY(max(int(buildingSizes[i] / 15), 1))
+
+    # Attach building to simulation
+    buildings.Add(building)
+
+mobility_helper.Install(enb)
+ns.BuildingsHelper.Install(enb)
+ns.BuildingsHelper.Install(ue)
+
 ###############################################################################
 # ns-3: set up LTE network
 ns.LogComponentEnableAll(ns.LOG_PREFIX_TIME)
@@ -82,13 +103,20 @@ epc = ns.CreateObject[ns.PointToPointEpcHelper]()
 lte = ns.CreateObject[ns.LteHelper]()
 
 lte.SetEpcHelper(epc)
+
+ns.Config.SetDefault('ns3::LteEnbPhy::TxPower', ns.DoubleValue(40))
+ns.Config.SetDefault('ns3::LteUePhy::TxPower', ns.DoubleValue(23))
+ns.Config.SetDefault('ns3::LteHelper::PathlossModel',
+                     ns.StringValue('ns3::HybridBuildingsPropagationLossModel'))
+ns.Config.SetDefault("ns3::UdpClient::Interval", ns.TimeValue(ns.MilliSeconds(10)))
+ns.Config.SetDefault("ns3::UdpClient::MaxPackets", ns.UintegerValue(1000000))
+ns.Config.SetDefault("ns3::LteHelper::UseIdealRrc", ns.BooleanValue(True))
+lte.SetEnbDeviceAttribute('DlEarfcn', ns.UintegerValue(100))    # 2120 MHz
+lte.SetEnbDeviceAttribute('UlEarfcn', ns.UintegerValue(18100))  # 1930 MHz
+
 lte.SetHandoverAlgorithmType('ns3::A3RsrpHandoverAlgorithm')
 lte.SetHandoverAlgorithmAttribute('Hysteresis', ns.DoubleValue(0.2))
 lte.SetHandoverAlgorithmAttribute('TimeToTrigger', ns.TimeValue(ns.MilliSeconds(100)))
-
-ns.Config.SetDefault('ns3::LteHelper::PathlossModel',
-                     ns.StringValue('ns3::BuildingsPropagationLossModel'));
-
 
 # Add handover info
 edevs = lte.InstallEnbDevice(enb)
@@ -101,24 +129,36 @@ epc.AssignUeIpv4Address(udevs)
 for i in range(nUEs):
     lte.Attach(udevs.Get(i))
 
-
-# ns.Config.SetDefault("ns3::UdpClient::Interval", ns.TimeValue(ns.MilliSeconds(10)));
-# ns.Config.SetDefault("ns3::UdpClient::MaxPackets", ns.UintegerValue(1000000));
-# ns.Config.SetDefault("ns3::LteHelper::UseIdealRrc", ns.BooleanValue(True));
-# lte.SetEnbDeviceAttribute('DlEarfcn', ns.UintegerValue(100));   # 2120 MHz
-# lte.SetEnbDeviceAttribute('UlEarfcn', ns.UintegerValue(18100)); # 1930 MHz
-
-
-# edevs = lte.InstallEnbDevice(enb)
-# lte.AddX2Interface(enb)
-# udevs = lte.InstallUeDevice(ue)
-
-# ns.InternetStackHelper().Install(ue)
-# epc.AssignUeIpv4Address(udevs)
-
 # bearer = ns.EpsBearer(ns.EpsBearer.GBR_CONV_VOICE)
-# lte.ActivateDedicatedEpsBearer(udevs.Get(0), bearer, tft)
+# lte.ActivateDataRadioBearer(udevs, bearer)
 
+    # tft = ns.EpcTft()
+    # flow = ns.EpcTft.PacketFilter()
+    # flow.localPortStart = 5000
+    # flow.localPortEnd = 5000
+    # flow.direction = ns.EpcTft.UPLINK
+    # tft.Add(flow)
+    # bearer = ns.EpsBearer(ns.EpsBearer.GBR_CONV_VOICE)
+    # lte.ActivateDedicatedEpsBearer(udevs.Get(i), bearer, tft)
+
+# stack = ns.InternetStackHelper()
+# stack.Install(ue)
+
+# pgw = epc.GetPgwNode()
+# address = ns.Ipv4AddressHelper()
+# address.SetBase(ns.Ipv4Address("7.0.0.0"), ns.Ipv4Mask("255.0.0.0"))
+
+# ue_ifaces = epc.AssignUeIpv4Address(ns.NetDeviceContainer(udevs))
+
+# # Set routing
+# for i in range(ue.GetN()):
+#     ns.Ipv4StaticRoutingHelper.AddStaticDefaultRoute(
+#         stack.GetStaticRouting(udevs.Get(i).GetObject[ns.Ipv4.GetTypeId()]),
+#         pgw.GetObject(ns.internet.Ipv4.GetTypeId()).GetAddress(0, 0).GetLocal(), 1
+#     )
+
+
+# ns.CreateObject[ns.Ipv4StaticRoutingHelper]()
 
 ###############################################################################
 # ns-3: set up callbacks
@@ -156,7 +196,7 @@ def RSRP_RSRQ_callback(RNTI, cell_id, rsrp, rsrq, is_serving, cc_id):
         # Write the enriched data, including the permanent IMSI
         RSRP_RSRQ_writer.write(
             f'{ns.Simulator.Now().GetSeconds()},{IMSI},{ue_node_id},'
-            f'{RNTI},{status},{enb_node_id},{cell_id},{rsrp:.03f},{rsrq:.03f}\n'
+            f'{RNTI},{status},{enb_node_id},{cell_id},{rsrp:.04f},{rsrq:.04f}\n'
         )
 
 
@@ -181,7 +221,7 @@ ns.Config.ConnectWithoutContext(
 )
 
 
-ns.Simulator.Stop(ns.Seconds(60 * nMinutes))
+ns.Simulator.Stop(ns.Seconds(60) * nMinutes)
 ns.Simulator.Run()
 ns.Simulator.Destroy()
 

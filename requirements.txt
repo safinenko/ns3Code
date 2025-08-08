@@ -1,0 +1,9 @@
+dash==3.1.1
+networkx==3.5
+numpy==2.3.2
+osmnx==2.0.5
+pandas==2.3.1
+plotly==6.2.0
+pyproj==3.7.1
+scipy==1.16.1
+gunicorn

@@ -10,18 +10,18 @@ UEroutes = pd.read_csv('outputs/UE_locations.csv', index_col = 'Time(s)')
 radioTowers = pd.read_csv('outputs/tower_locations.csv')
 
 # Import results from the simulation
-UEmeasurements = pd.read_csv('outputs/rsrp_rsrq_trace.csv',
-                             index_col = 'Time(s)',
-                             dtype = {
-                                'IMSI' : 'Int64',
-                                'UE_NodeID' : 'Int64',
-                                'UE_RNTI' : 'Int64',
-                                'Status' : str,
-                                'eNB_NodeID' : 'Int64',
-                                'CellID' : 'Int64',
-                                'RSRP' : float,
-                                'RSRQ' : float
-                             })
+UEmeasurements = pd.read_csv(
+    'outputs/rsrp_rsrq_trace.csv',
+    index_col = 'Time(s)',
+    usecols = ['Time(s)', 'IMSI', 'Status', 'eNB_NodeID', 'RSRP', 'RSRQ'],
+    dtype = {
+        'IMSI' : 'Int64',
+        'Status' : str,
+        'eNB_NodeID' : 'Int64',
+        'RSRP' : float,
+        'RSRQ' : float
+    }
+)
 
 # Parse logs
 timeStampPattern = re.compile(r'^\+?(\d+\.\d+)s')
@@ -42,6 +42,75 @@ with open(log_path, 'r') as fileIn:
 
 logs = pd.DataFrame(logData, columns = ['Time(s)', 'IMSI', 'Message'])
 allMessageTypes = logs['Message'].unique()
+
+HOs = logs[logs['Message'] == 'HANDOVER_PREPARATION --> HANDOVER_LEAVING']
+HOdata = []
+for _, row in HOs.iterrows():
+    dataSlice = UEmeasurements[
+        (UEmeasurements['IMSI'] == row['IMSI']) &
+        (UEmeasurements.index < row['Time(s)'] + 10) & 
+        (UEmeasurements.index > row['Time(s)'] - 10)
+    ]
+
+    dataSliceBefore = dataSlice[(dataSlice.index < row['Time(s)'] - 5) & (dataSlice['Status'] == 'Serving')]['eNB_NodeID'].unique()
+    dataSliceAfter = dataSlice[(dataSlice.index > row['Time(s)'] + 5) & (dataSlice['Status'] == 'Serving')]['eNB_NodeID'].unique()
+
+    if (len(dataSliceBefore) == 1) and (len(dataSliceAfter) == 1) and (dataSliceBefore[0] != dataSliceAfter[0]):
+        HOdata.append((dataSlice, row['Time(s)']))
+
+
+def plotDataSlice(HO_ID):
+    hoGraph = go.Figure()
+    
+    dataSlice, HOtime = HOdata[HO_ID]
+    eNB_Before = dataSlice[(dataSlice.index < HOtime - 5) & (dataSlice['Status'] == 'Serving')]['eNB_NodeID'].unique()[0]
+    eNB_After = dataSlice[(dataSlice.index > HOtime + 5) & (dataSlice['Status'] == 'Serving')]['eNB_NodeID'].unique()[0]
+
+    sourceeNB = dataSlice[dataSlice['eNB_NodeID'] == eNB_Before]
+    hoGraph.add_trace(go.Scatter(
+        x = sourceeNB.index / 60,
+        y = sourceeNB['RSRP'],
+        name = f'Source eNB RSRP [eNB ID: {eNB_Before}] (dBm)',
+        line = {'color' : 'blue', 'width' : 1}))
+
+    targeteNB = dataSlice[dataSlice['eNB_NodeID'] == eNB_After]
+    hoGraph.add_trace(go.Scatter(
+        x = targeteNB.index / 60,
+        y = targeteNB['RSRP'],
+        name = f'Target eNB RSRP [eNB ID: {eNB_After}] (dBm)',
+        line = {'color' : 'red', 'width' : 1}))
+
+    intersection = sourceeNB.index[np.where(sourceeNB['RSRP'] < targeteNB['RSRP'])[0][0]]
+
+    hoGraph.update_layout(
+        title_text = f'Difference : {HOtime - intersection:g} seconds',
+        xaxis_title = 'Time (m)',
+        yaxis = {'title' : 'RSRP (dBm)'},
+        legend = {
+            'orientation' : 'h',
+            'yanchor' : 'bottom',
+            'y' : -0.3,
+            'xanchor' : 'left',
+            'x' : 0
+        }
+    )
+
+    bounds = [dataSlice['RSRP'].min() - 1, dataSlice['RSRP'].max() + 1]
+    hoGraph.add_trace(go.Scatter(
+        x = [HOtime / 60, HOtime / 60],
+        y = bounds,
+        name = 'HO time',
+        line = {'color' : 'black', 'width' : 0.5, 'dash' : 'dash'}))
+
+
+    hoGraph.add_trace(go.Scatter(
+        x = [intersection / 60, intersection / 60],
+        y = bounds,
+        name = 'HO time',
+        line = {'color' : 'black', 'width' : 0.5, 'dash' : 'dash'}))
+
+    return hoGraph
+
 
 
 # Time Slider
@@ -183,10 +252,23 @@ app.layout = html.Div([
                     style = {'textAlign' : 'center'}),
                 ],
                 className = 'slider-container'),
-                dcc.Graph(id = 'signal-strength-graph',
-                          config = {'displayModeBar' : False},
-                          style = {'height' : '70vh'})
-            ],             style = {'width' : '50%', 'display' : 'inline-block',
+
+                dcc.Tabs([
+                    dcc.Tab(label = 'RSRP/RSRQ', children = [
+                        dcc.Graph(id = 'signal-strength-graph',
+                                  config = {'displayModeBar' : False},
+                                  style = {'height' : '60vh'})
+                    ]),
+                    dcc.Tab(label = 'HO Stats', children = [
+                        dcc.Dropdown([f'{i}' for i in range(len(HOdata))], '0', id='HOselect'),
+                        dcc.Graph(id = 'HOstat',
+                                  config = {'displayModeBar' : False},
+                                  style = {'height' : '60vh'},
+                                  figure = plotDataSlice(0))
+                    ]),
+                ])
+            ],             
+            style = {'width' : '50%', 'display' : 'inline-block',
                      'verticalAlign' : 'top', 'padding' : '5px'}
         )
     ]),
@@ -194,6 +276,13 @@ app.layout = html.Div([
     dcc.Store(id = 'autoAnimate', storage_type = 'memory'),
     dcc.Store(id = 'listOfRRCs', storage_type = 'memory')
 ])
+
+
+@app.callback(
+    Output('HOstat', 'figure'),
+    Input('HOselect', 'value'))
+def updateHOgraph(x):
+    return plotDataSlice(int(x))
 
 
 @app.callback(
@@ -213,7 +302,6 @@ app.layout = html.Div([
     Input('network-map-graph', 'clickData'),
     prevent_initial_call = True)
 def update_map(_, autoSlide, selected_time, used_ID, mapData, autoAnimate, listOfRRCs, clickData):
-    print(callback_context.triggered_id, autoAnimate)
     if autoAnimate is None:
         autoAnimate = False
     if callback_context.triggered_id == 'autoPlaySimulation':
@@ -225,8 +313,6 @@ def update_map(_, autoSlide, selected_time, used_ID, mapData, autoAnimate, listO
             if selected_time == UEroutes.index.max():
                 returnVars = False, 'Autoplay Off', True
             returnVars = True, 'Autoplaying..', False
-
-        print(returnVars)
 
         return mapData, selected_time, *returnVars, updateGraph(clickData, used_ID, selected_time, listOfRRCs, 'a')[0]
 
@@ -285,18 +371,24 @@ def updateGraph(clickData, used_ID, selected_time, listOfRRCs, _):
                                                  (UEmeasurements['Status'] == 'Serving')]
 
         fig = go.Figure()
-        allServing = UEmeasurements[
-            (UEmeasurements['IMSI'] == UE_ID) &
-            UEmeasurements['eNB_NodeID'].isin(servingCellMeasurements['eNB_NodeID'].unique())]
-        for eNB_ID, subDF in allServing.groupby('eNB_NodeID'):
+        for eNB_ID, subDF in UEmeasurements[UEmeasurements['IMSI'] == UE_ID].groupby('eNB_NodeID'):
             subDF2 = subDF.reset_index() \
                           .sort_values(['Time(s)', 'RSRP']) \
                           .groupby('Time(s)').tail(1)
-            fig.add_trace(go.Scatter(
-                x = subDF2['Time(s)'] / 60,
-                y = subDF2['RSRP'],
-                name = f'eNB {eNB_ID} RSRP (dBm)',
-                line = {'color' : 'blue', 'width' : 1}))
+            if eNB_ID in servingCellMeasurements['eNB_NodeID'].unique():
+                fig.add_trace(go.Scatter(
+                    x = subDF2['Time(s)'] / 60,
+                    y = subDF2['RSRP'],
+                    name = f'eNB {eNB_ID} RSRP (dBm)',
+                    line = {'color' : 'blue', 'width' : 1}))
+            else:
+                fig.add_trace(go.Scatter(
+                    x = subDF2['Time(s)'] / 60,
+                    y = subDF2['RSRP'],
+                    name = f'eNB {eNB_ID} RSRP (dBm)',
+                    visible = 'legendonly',
+                    line = {'color' : 'orange', 'width' : 0.5}))
+
 
         servingCellMeasurements2 = servingCellMeasurements.reset_index() \
                                                           .sort_values(['Time(s)', 'RSRP']) \
@@ -315,6 +407,9 @@ def updateGraph(clickData, used_ID, selected_time, listOfRRCs, _):
             line = {'color' : 'red', 'width' : 3}))
 
         # Update layout for two y-axes
+        allServing = UEmeasurements[
+            (UEmeasurements['IMSI'] == UE_ID) &
+            UEmeasurements['eNB_NodeID'].isin(servingCellMeasurements['eNB_NodeID'].unique())]
         bounds = [allServing['RSRP'].min() - 2, allServing['RSRP'].max() + 2]
         fig.update_layout(
             title_text = f'Signal Strength for UE {UE_ID}',
