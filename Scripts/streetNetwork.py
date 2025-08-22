@@ -3,10 +3,10 @@ import pyproj
 from pathlib import Path
 
 # Name of the street network file
-roadNetworkFile = 'roadNetwork.graphml'
+roadNetworkFile = Path('inputData/roadNetwork.graphml')
 
-# Bounding box for the target region (Crockett, TX)
-boundingBox = [-95.6315, 31.2369, -95.3629, 31.40307]
+# Bounding box for the target region
+boundingBox = [-95.826972, 29.963325, -95.657067, 30.082114]
 
 # Projection from (lat, lon) to a flat cartesian (x, y) system.
 _baseProjectionMap = pyproj.Proj('+proj=cea +lon=0 +lat_ts=37.5 '

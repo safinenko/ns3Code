@@ -3,7 +3,8 @@ nMinutes = 20
 UeMeasurementsFilterPeriod = 100 # ms
 
 # Settings for UEpaths
-minTravelDist = 17000
+minTravelDist = 5000             # Minimum Cartesian distance between start
+                                 # and end points for purposes of UE routing
 
 # Building parameters
 nBuildings = 20
